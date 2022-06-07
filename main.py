@@ -11,12 +11,12 @@ from vtkmodules.vtkRenderingCore import (
     vtkRenderWindowInteractor,
     vtkRenderer
 )
+
 # intersection de segments
 # https://stackoverflow.com/questions/3252194/numpy-and-line-intersections
 
 
 def render_map(values, tr, tl, br, bl):
-
     nx, ny = values.shape
 
     point_values = vtkDoubleArray()
@@ -84,12 +84,48 @@ def main(data, tr,tl,br,bl):
     iren.Initialize()
     iren.Start()
 
+class converter:
+
+    def __init__(self):
+        pass
+
+
+def XtoL(x,y,a,b):
+    #quadratic equation coeffs, aa*mm^2+bb*m+cc=0
+    aa = a[3]*b[2] - a[2]*b[3]
+    bb = a[3]*b[0] -a[0]*b[3] + a[1]*b[2] - a[2]*b[1] + x*b[3] - y*a[3]
+    cc = a[1]*b[0] -a[0]*b[1] + x*b[1] - y*a[1]
+
+    #compute m = (-b+sqrt(b^2-4ac))/(2a)
+    det = math.sqrt(bb*bb - 4*aa*cc)
+    m = (-bb+det)/(2*aa)
+
+    #compute l
+    l = (x-a[0]-a[2]*m)/(a[1]+a[3]*m)
+    return l,m
+
+def get_lat(tr, tl, br, bl):
+    # mapping
+    px = [bl[0], br[0], tr[0], tl[0]]
+    py = [bl[1], br[1], tr[1], tl[1]]
+
+    #compute coefficients
+    A = [[1, 0, 0, 0],[1, 1, 0, 0],[1, 1, 1, 1],[1, 0, 1, 0]];
+    AI = np.linalg.inv(A)
+    a = np.matmul(AI,px)
+    b = np.matmul(AI,py)
+
+    #x = a[0] + a[1]*l + a[2]*m + a[3]*l*m
+	#y = b[0] + b[1]*l + b[2]*m + b[3]*l*m
+
+    # aller récupérer dans la carte des hauteurs
+    pass
+
 
 if __name__ == '__main__':
     # import data
 
     gps_file = open('vtkgps.txt', 'r')
-    count = 0
     Lines = gps_file.readlines()
 
     parcours_avion = []
