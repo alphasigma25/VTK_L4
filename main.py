@@ -3,56 +3,44 @@ import math
 import numpy as np
 import pyproj
 import vtk
-from vtkmodules.vtkCommonCore import vtkDoubleArray, vtkPoints
+from vtkmodules.vtkCommonColor import vtkNamedColors
+from vtkmodules.vtkCommonCore import vtkDoubleArray, vtkPoints, vtkLookupTable
 from vtkmodules.vtkCommonDataModel import vtkStructuredGrid
+from vtkmodules.vtkIOImage import vtkImageReader
 from vtkmodules.vtkInteractionStyle import vtkInteractorStyleTrackballCamera
 from vtkmodules.vtkRenderingCore import (
     vtkRenderWindow,
     vtkRenderWindowInteractor,
-    vtkRenderer
+    vtkRenderer, vtkDataSetMapper, vtkActor, vtkTexture
 )
+
 
 # intersection de segments
 # https://stackoverflow.com/questions/3252194/numpy-and-line-intersections
 
+colors = vtkNamedColors()
 
-def render_map(values, tr, tl, br, bl):
+
+def render_map(values, conv, img):
     nx, ny = values.shape
 
     point_values = vtkDoubleArray()
     point_values.SetNumberOfComponents(1)
     point_values.SetNumberOfTuples(nx * ny)
-    for i in range(nx * ny):
-        point_values.SetValue(i, 2)
 
-    min_h = math.inf
-    max_h = 0.0
-    angle = 5
     r_terre = 6352800
-    d_angle = angle / (len(values) - 1)
     points = vtkPoints()
-
     for y in range(ny):
         for x in range(nx):
             current = values[x][y]
-            r = r_terre + current
-            phi = math.radians(45 + d_angle * x)
-            theta = math.radians(90 + d_angle * y)
-            cart_x = -r * math.sin(phi) * math.cos(theta)
-            cart_z = r * math.sin(phi) * math.sin(theta)
-            cart_y = r * math.cos(phi)
-            min_h = min(min_h, current)
-            max_h = max(max_h, current)
-            err = 1000
-            if 0 < x < nx - 1 and 0 < y < ny - 1:
-                err = 0
-                for i in range(x - 1, x + 2):
-                    for j in range(y - 1, y + 2):
-                        err = max(err, abs(values[i][j] - values[x][y]))
-            if err == 0:
-                point_values.SetValue(y * nx + x, 0)
-            else:
-                point_values.SetValue(y * nx + x, current)
+            lon, lat = conv.XtoL(x/nx, y/ny)
+            r = r_terre + current * 2
+            phi = math.radians(lat)
+            theta = math.radians(lon)
+            cart_x = r * math.sin(phi) * math.cos(theta)
+            cart_y = r * math.sin(phi) * math.sin(theta)
+            cart_z = r * math.cos(phi)
+            point_values.SetValue(y * nx + x, current)
             points.InsertNextPoint(cart_x, cart_y, cart_z)
 
     struct_grid = vtkStructuredGrid()
@@ -60,17 +48,42 @@ def render_map(values, tr, tl, br, bl):
     struct_grid.SetPoints(points)
     struct_grid.GetPointData().SetScalars(point_values)
 
+
+    txt = vtkTexture()
+    txt.SetInputConnection(img.GetOutputPort())
+
+
+    lut = vtkLookupTable()
+
+    lut.SetBelowRangeColor(0.529, 0.478, 1.000, 1.0)
+    lut.UseBelowRangeColorOn()
+    lut.SetHueRange(0.33, 0)
+    lut.SetValueRange(0.63, 1)
+    lut.SetSaturationRange(0.48, 0)
+    lut.Build()
+
+    mapper = vtkDataSetMapper()
+    mapper.SetInputData(struct_grid)
+    mapper.SetLookupTable(lut)
+    mapper.SetScalarRange(200, 900)
+    mapper.ScalarVisibilityOn()
+
+    actor = vtkActor()
+    actor.SetMapper(mapper)
+    actor.SetTexture(txt)
+
     ren = vtkRenderer()
+    ren.AddActor(actor)
 
     return ren
 
 
-def main(data, tr,tl,br,bl):
+def main(data, conv, img):
     ren_win = vtkRenderWindow()
 
-    ren = render_map(data, tr,tl,br,bl)
+    ren = render_map(data, conv, img)
 
-    ren.SetBackground(1.0, 1.0, 1.0)
+    ren.SetBackground(0.9, 0.9, 0.9)
 
     ren_win.AddRenderer(ren)
     ren_win.SetSize(600, 600)
@@ -84,43 +97,45 @@ def main(data, tr,tl,br,bl):
     iren.Initialize()
     iren.Start()
 
-class converter:
 
-    def __init__(self):
-        pass
+class Converter:
+    def __init__(self, tr, tl, br, bl):
+        # mapping
+        px = [bl[0], br[0], tr[0], tl[0]]
+        py = [bl[1], br[1], tr[1], tl[1]]
+
+        # compute coefficients
+        A = [[1, 0, 0, 0], [1, 1, 0, 0], [1, 1, 1, 1], [1, 0, 1, 0]]
+        AI = np.linalg.inv(A)
+        self.a = np.matmul(AI, px)
+        self.b = np.matmul(AI, py)
+
+    def LtoX(self, x, y):
+        # quadratic equation coeffs, aa*mm^2+bb*m+cc=0
+        aa = self.a[3] * self.b[2] - self.a[2] * self.b[3]
+        bb = self.a[3] * self.b[0] - self.a[0] * self.b[3] + self.a[1] * self.b[2] - self.a[2] * self.b[1] + x * self.b[
+            3] - y * self.a[3]
+        cc = self.a[1] * self.b[0] - self.a[0] * self.b[1] + x * self.b[1] - y * self.a[1]
+
+        # compute m = (-b+sqrt(b^2-4ac))/(2a)
+        det = math.sqrt(bb * bb - 4 * aa * cc)
+        m = (-bb + det) / (2 * aa)
+
+        # compute l
+        l = (x - self.a[0] - self.a[2] * m) / (self.a[1] + self.a[3] * m)
+        return l, m
+
+    def XtoL(self, l, m):
+        newx = self.a[0] + self.a[1] * l + self.a[2] * m + self.a[3] * l * m
+        newy = self.b[0] + self.b[1] * l + self.b[2] * m + self.b[3] * l * m
+        return newx, newy
 
 
-def XtoL(x,y,a,b):
-    #quadratic equation coeffs, aa*mm^2+bb*m+cc=0
-    aa = a[3]*b[2] - a[2]*b[3]
-    bb = a[3]*b[0] -a[0]*b[3] + a[1]*b[2] - a[2]*b[1] + x*b[3] - y*a[3]
-    cc = a[1]*b[0] -a[0]*b[1] + x*b[1] - y*a[1]
+def get_index(lon, lat):
+    return round((lat-60)*6000/(65-60)), round((lon-5) * 6000/(10-5))
 
-    #compute m = (-b+sqrt(b^2-4ac))/(2a)
-    det = math.sqrt(bb*bb - 4*aa*cc)
-    m = (-bb+det)/(2*aa)
-
-    #compute l
-    l = (x-a[0]-a[2]*m)/(a[1]+a[3]*m)
-    return l,m
-
-def get_lat(tr, tl, br, bl):
-    # mapping
-    px = [bl[0], br[0], tr[0], tl[0]]
-    py = [bl[1], br[1], tr[1], tl[1]]
-
-    #compute coefficients
-    A = [[1, 0, 0, 0],[1, 1, 0, 0],[1, 1, 1, 1],[1, 0, 1, 0]];
-    AI = np.linalg.inv(A)
-    a = np.matmul(AI,px)
-    b = np.matmul(AI,py)
-
-    #x = a[0] + a[1]*l + a[2]*m + a[3]*l*m
-	#y = b[0] + b[1]*l + b[2]*m + b[3]*l*m
-
-    # aller récupérer dans la carte des hauteurs
-    pass
-
+def index_to_coord(i,j):
+    return 60+i*(65-60)/6000, 5+j*(10-5)/6000
 
 if __name__ == '__main__':
     # import data
@@ -139,7 +154,6 @@ if __name__ == '__main__':
             height = float(infos[3])
             parcours_avion.append((coord, height))
     gps_file.close()
-    print(len(parcours_avion))
 
     # coord de l'image jpg :
     # Haut-gauche : 1349340 7022573
@@ -155,12 +169,33 @@ if __name__ == '__main__':
     tr = rt90_to_latlon.transform(1371573, 7022967)
     br = rt90_to_latlon.transform(1371835, 7006362)
     bl = rt90_to_latlon.transform(1349602, 7005969)
-    print(tl, tr, br, bl)
+
+    # utiliser XtoL pour récupérer les coordonnées dans le maxi tableau
+    # faire calcul pour chercher les points qui sont les plus près du truc qu'on cherche
 
     # hauteurs depuis fichier binaire
     h_data = np.fromfile("EarthEnv-DEM90_N60E010.bil", dtype=np.dtype(np.int16))
     h_data = h_data.reshape((6000, 6000))
     # data entre latitude 60 et 65 et longitude 5 et 10
 
+    extracted_data = []
+
+    conv = Converter(tr, tl, br, bl)
+    # extract data
+    # boucler sur n valeurs comprises dans le carré
+    datas = []
+    ni = 100
+    nj = 100
+    for i in range(ni):
+        datas.append([])
+        for j in range(nj):
+            lon, lat = conv.XtoL(i/ni, j/nj)
+            x, y = get_index(lon, lat)
+            datas[i].append(h_data[x][y])
+
+    # get image
+    imageReader = vtkImageReader()
+    imageReader.SetFileName('glider_map.jpg')
+
     # rendu
-    main(h_data, tr, tl, br, bl)
+    main(np.array(datas), conv, imageReader)
