@@ -56,10 +56,14 @@ class Converter:
         Returns:
             Tuple[float,float]: coordonnées dans l'espace de départ
         """
+        assert y >= 59.99
+        assert y <= 65.01
+        assert x >= 9.99
+        assert x <= 15.01
         # quadratic equation coeffs, aa*mm^2+bb*m+cc=0
         aa = self.a[3] * self.b[2] - self.a[2] * self.b[3]
-        bb = self.a[3] * self.b[0] - self.a[0] * self.b[3] + self.a[1] * \
-            self.b[2] - self.a[2] * self.b[1] + x * self.b[3] - y * self.a[3]
+        bb = self.a[3] * self.b[0] - self.a[0] * self.b[3] + self.a[1] * self.b[2] - self.a[2] * self.b[1] + x * self.b[
+            3] - y * self.a[3]
         cc = self.a[1] * self.b[0] - self.a[0] * \
             self.b[1] + x * self.b[1] - y * self.a[1]
 
@@ -69,6 +73,12 @@ class Converter:
 
         # compute l
         l = (x - self.a[0] - self.a[2] * m) / (self.a[1] + self.a[3] * m)
+
+        assert l >= -0.01
+        assert l <= 1.01
+        assert m >= -0.01
+        assert m <= 1.01
+
         return l, m
 
     def x_to_l(self, l: float, m: float) -> Tuple[float, float]:
@@ -80,29 +90,54 @@ class Converter:
         Returns:
              Tuple[float, float] (latitude, longitude)
         """
-        assert l >= 0
-        assert l <= 1
-        assert m >= 0
-        assert m <= 1
+        assert l >= -0.01
+        assert l <= 1.01
+        assert m >= -0.01
+        assert m <= 1.01
+
         newx = self.a[0] + self.a[1] * l + self.a[2] * m + self.a[3] * l * m
         newy = self.b[0] + self.b[1] * l + self.b[2] * m + self.b[3] * l * m
+
+        assert newy >= 59.99
+        assert newy <= 65.01
+        assert newx >= 9.99
+        assert newx <= 15.01
+
         return newy, newx
 
 
-def get_index(lat: float, lon: float) -> Tuple[float, float]:
-    assert lat >= 60
-    assert lat <= 65
-    assert lon >= 10
-    assert lon <= 15
-    return (65-lat)*6000/(65-60), (lon-10) * 6000/(15-10)
+def coord_to_index(lat: float, lon: float) -> Tuple[float, float]:
+    assert lat >= 59.99
+    assert lat <= 65.01
+    assert lon >= 9.99
+    assert lon <= 15.01
+
+    y = (65-lat)*6000/(65-60)
+    x = (lon-10) * 6000/(15-10)
+
+    assert x >= -0.01
+    assert x <= 6000.01
+    assert y >= -0.01
+    assert y <= 6000.01
+
+    return y, x
 
 
 def index_to_coord(i: int, j: int) -> Tuple[float, float]:
-    assert i >= 0
-    assert i <= 6000
-    assert j >= 0
-    assert j <= 6000
-    return 60+(6000-i)/6000*5, 10+j/6000*5
+    assert i >= -0.01
+    assert i <= 6000.01
+    assert j >= -0.01
+    assert j <= 6000.01
+
+    lat = 60+(6000-i)/6000*5
+    lon = 10+j/6000*5
+
+    assert lat >= 59.99
+    assert lat <= 65.01
+    assert lon >= 9.99
+    assert lon <= 15.01
+
+    return lat, lon
 
 
 def approximer(h_data, x: float, y: float) -> float:
@@ -143,6 +178,7 @@ def render_map(values: List[List[float]], conv: Converter, img):
 
     points = vtkPoints()
 
+    # """
     for y in range(ny):
         for x in range(nx):
             current = values[x][y]
@@ -150,6 +186,7 @@ def render_map(values: List[List[float]], conv: Converter, img):
             points.InsertNextPoint(x, y, current/100)
 
     """
+
     r_terre = 6352800
     points = vtkPoints()
     for y in range(ny):
@@ -162,9 +199,8 @@ def render_map(values: List[List[float]], conv: Converter, img):
             cart_x = r * math.sin(phi) * math.cos(theta)
             cart_y = r * math.sin(phi) * math.sin(theta)
             cart_z = r * math.cos(phi)
-            point_values.SetValue(y * nx + x, current)
-            points.InsertNextPoint(cart_x, cart_y, cart_z)
-    """
+            point_values.SetValue(y * nx + x, current/100)
+            points.InsertNextPoint(cart_x, cart_y, cart_z) #"""
 
     struct_grid = vtkStructuredGrid()
     struct_grid.SetDimensions(nx, ny, 1)
@@ -187,7 +223,7 @@ def render_map(values: List[List[float]], conv: Converter, img):
     mapper.SetInputData(struct_grid)
     mapper.SetLookupTable(lut)
     mapper.SetScalarRange(6, 8)
-    mapper.ScalarVisibilityOn()
+    # mapper.ScalarVisibilityOn()
 
     actor = vtkActor()
     actor.SetMapper(mapper)
@@ -262,18 +298,23 @@ if __name__ == '__main__':
     # utiliser XtoL pour récupérer les coordonnées dans le maxi tableau
     # faire calcul pour chercher les points qui sont les plus près du truc qu'on cherche
     datas = []
-    ni = 100
-    nj = 100
+    ni = 76
+    nj = 102
     for i in range(ni):
         datas.append([])
         for j in range(nj):
-            lon, lat = conv.x_to_l(ni-i/ni, j/nj)
-            x, y = get_index(lat, lon)
+            lat, lon = conv.x_to_l(i/ni, j/nj)
+            x, y = coord_to_index(lat, lon)
             datas[i].append(approximer(h_data, x, y))
 
     # get image
     imageReader = vtkImageReader()
     imageReader.SetFileName('glider_map.jpg')
+
+    readerFactory = vtkImageReader2Factory()
+    textureFile = readerFactory.CreateImageReader2('glider_map.jpg')
+    textureFile.SetFileName(fileName)
+    textureFile.Update()
 
     # rendu
     main(np.array(datas), conv, imageReader)
