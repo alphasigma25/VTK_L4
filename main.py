@@ -7,17 +7,18 @@ import pyproj
 import vtk
 
 from vtkmodules.vtkCommonColor import vtkNamedColors
+from vtkmodules.vtkCommonDataModel import vtkPlane, vtkSphere
 from vtkmodules.vtkCommonCore import vtkDoubleArray, vtkPoints, vtkLookupTable
-from vtkmodules.vtkCommonDataModel import vtkStructuredGrid, vtkPolyLine, vtkPolyData, vtkCellArray
-from vtkmodules.vtkFiltersCore import vtkTubeFilter
-from vtkmodules.vtkFiltersGeneral import vtkWarpTo
+from vtkmodules.vtkCommonDataModel import vtkStructuredGrid
+from vtkmodules.vtkFiltersCore import vtkTubeFilter, vtkCutter, vtkStripper
 from vtkmodules.vtkFiltersSources import vtkLineSource
 from vtkmodules.vtkIOImage import vtkImageReader2Factory
 from vtkmodules.vtkInteractionStyle import vtkInteractorStyleTrackballCamera
 from vtkmodules.vtkRenderingCore import (
     vtkRenderWindow,
     vtkRenderWindowInteractor,
-    vtkRenderer, vtkActor, vtkTexture, vtkDataSetMapper, vtkPolyDataMapper
+    vtkRenderer, vtkActor, vtkTexture, vtkDataSetMapper,
+    vtkProperty
 )
 
 
@@ -184,6 +185,38 @@ def coord_to_exact_pos(lat: float, lon: float, height: float) -> Tuple[float, fl
     cart_z = r * math.cos(phi)
     return (cart_x, cart_y, cart_z)
 
+def render_lvl(map, h_cut):
+
+    sphere_cut = vtkSphere()
+    sphere_cut.SetRadius(r_terre+h_cut)
+
+    cutter = vtkCutter()
+    cutter.SetInputData(map)
+    cutter.SetCutFunction(sphere_cut)
+    cutter.Update()
+
+    stripper = vtkStripper()
+    stripper.SetInputConnection(cutter.GetOutputPort())
+    stripper.JoinContiguousSegmentsOn()
+
+    tubes = vtkTubeFilter()
+    tubes.SetInputConnection(stripper.GetOutputPort())
+    tubes.SetNumberOfSides(8)
+    tubes.SetRadius(25)
+
+    mapper = vtkDataSetMapper()
+    mapper.SetInputConnection(tubes.GetOutputPort())
+    mapper.ScalarVisibilityOff()
+
+    actor = vtkActor()
+    actor.SetMapper(mapper)
+
+    prop1 = vtkProperty()
+    prop1.SetColor(0, 1, 1)
+    actor.SetProperty(prop1)
+
+    return actor
+
 
 def render_map(values: List[List[float]], conv: Converter, img, avion: List[Tuple[int, int, float]]):
     nx, ny = values.shape
@@ -253,16 +286,8 @@ def render_map(values: List[List[float]], conv: Converter, img, avion: List[Tupl
     tube.SetNumberOfSides(8)
     tube.Update()
 
-    lut = vtkLookupTable()
-    lut.SetNumberOfTableValues(3)
-    lut.SetTableValue(0, colors.GetColor4d("Blue"))
-    lut.SetTableValue(1, colors.GetColor4d("Green"))
-    lut.SetTableValue(2, colors.GetColor4d("Red"))
-    lut.Build()
-
     avion_mapper = vtkDataSetMapper()
     avion_mapper.SetInputConnection(tube.GetOutputPort())
-    print(min_d, max_d)
     avion_mapper.ScalarVisibilityOn()
 
     avion_actor = vtkActor()
@@ -271,6 +296,7 @@ def render_map(values: List[List[float]], conv: Converter, img, avion: List[Tupl
     ren = vtkRenderer()
     ren.AddActor(avion_actor)
     ren.AddActor(map_actor)
+    ren.AddActor(render_lvl(struct_grid, 600))
 
     return ren
 
@@ -358,5 +384,3 @@ if __name__ == '__main__':
 
     # rendu
     main(np.array(datas), conv, textureFile, parcours_avion)
-
-    # https://kitware.github.io/vtk-examples/site/Python/VisualizationAlgorithms/LOx/
