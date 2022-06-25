@@ -173,19 +173,17 @@ def render_map(values: List[List[float]], conv: Converter, img):
     nx, ny = values.shape
 
     point_values = vtkDoubleArray()
-    point_values.SetNumberOfComponents(1)
-    point_values.SetNumberOfTuples(nx * ny)
-
+    point_values.SetNumberOfComponents(2)
     points = vtkPoints()
 
-    # """
+    """
     for y in range(ny):
         for x in range(nx):
             current = values[x][y]
-            point_values.SetValue(y * nx + x, current/100)
-            points.InsertNextPoint(2*x, y, current/100)
+            point_values.InsertNextTuple((y/ny, x/nx))
+            points.InsertNextPoint(y, x, current/100)
 
-    """
+    #"""
 
     r_terre = 6352800
     points = vtkPoints()
@@ -193,37 +191,26 @@ def render_map(values: List[List[float]], conv: Converter, img):
         for x in range(nx):
             current = values[x][y]
             lat, lon = conv.x_to_l(x/nx, y/ny)
-            r = r_terre + current * 2
+            r = r_terre + current
             phi = math.radians(lat)
-            theta = math.radians(lon)
+            theta = math.radians(-lon/2)
             cart_x = r * math.sin(phi) * math.cos(theta)
             cart_y = r * math.sin(phi) * math.sin(theta)
             cart_z = r * math.cos(phi)
-            point_values.SetValue(y * nx + x, current/100)
+            point_values.InsertNextTuple((x/nx, y/ny))
             points.InsertNextPoint(cart_x, cart_y, cart_z) #"""
 
     struct_grid = vtkStructuredGrid()
     struct_grid.SetDimensions(nx, ny, 1)
     struct_grid.SetPoints(points)
-    struct_grid.GetPointData().SetScalars(point_values)
+    struct_grid.GetPointData().SetTCoords(point_values)
 
     txt = vtkTexture()
     txt.SetInputConnection(img.GetOutputPort())
 
-    lut = vtkLookupTable()
-
-    lut.SetBelowRangeColor(0.529, 0.478, 1.000, 1.0)
-    lut.UseBelowRangeColorOn()
-    lut.SetHueRange(0.33, 0)
-    lut.SetValueRange(0.63, 1)
-    lut.SetSaturationRange(0.48, 0)
-    lut.Build()
-
-    mapper = vtkDataSetMapper()  # il faut un DataSetMapper parce qu'on stocke les données dans un structured grid
+    # il faut un DataSetMapper parce qu'on stocke les données dans un structured grid
+    mapper = vtkDataSetMapper()
     mapper.SetInputData(struct_grid)
-    mapper.SetLookupTable(lut)
-    mapper.SetScalarRange(4.9, 10)
-    mapper.ScalarVisibilityOff()
 
     actor = vtkActor()
     actor.SetMapper(mapper)
