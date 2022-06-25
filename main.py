@@ -9,12 +9,12 @@ import vtk
 from vtkmodules.vtkCommonColor import vtkNamedColors
 from vtkmodules.vtkCommonCore import vtkDoubleArray, vtkPoints, vtkLookupTable
 from vtkmodules.vtkCommonDataModel import vtkStructuredGrid
-from vtkmodules.vtkIOImage import vtkImageReader
+from vtkmodules.vtkIOImage import vtkImageReader, vtkImageReader2Factory
 from vtkmodules.vtkInteractionStyle import vtkInteractorStyleTrackballCamera
 from vtkmodules.vtkRenderingCore import (
     vtkRenderWindow,
     vtkRenderWindowInteractor,
-    vtkRenderer, vtkDataSetMapper, vtkActor, vtkTexture
+    vtkRenderer, vtkActor, vtkTexture, vtkDataSetMapper
 )
 
 
@@ -183,7 +183,7 @@ def render_map(values: List[List[float]], conv: Converter, img):
         for x in range(nx):
             current = values[x][y]
             point_values.SetValue(y * nx + x, current/100)
-            points.InsertNextPoint(x, y, current/100)
+            points.InsertNextPoint(2*x, y, current/100)
 
     """
 
@@ -219,11 +219,11 @@ def render_map(values: List[List[float]], conv: Converter, img):
     lut.SetSaturationRange(0.48, 0)
     lut.Build()
 
-    mapper = vtkDataSetMapper()
+    mapper = vtkDataSetMapper()  # il faut un DataSetMapper parce qu'on stocke les données dans un structured grid
     mapper.SetInputData(struct_grid)
     mapper.SetLookupTable(lut)
-    mapper.SetScalarRange(6, 8)
-    # mapper.ScalarVisibilityOn()
+    mapper.SetScalarRange(4.9, 10)
+    mapper.ScalarVisibilityOff()
 
     actor = vtkActor()
     actor.SetMapper(mapper)
@@ -308,13 +308,11 @@ if __name__ == '__main__':
             datas[i].append(approximer(h_data, x, y))
 
     # get image
-    imageReader = vtkImageReader()
-    imageReader.SetFileName('glider_map.jpg')
-
+    fileName = 'glider_map.jpg'
     readerFactory = vtkImageReader2Factory()
-    textureFile = readerFactory.CreateImageReader2('glider_map.jpg')
+    textureFile = readerFactory.CreateImageReader2(fileName)
     textureFile.SetFileName(fileName)
     textureFile.Update()
 
     # rendu
-    main(np.array(datas), conv, imageReader)
+    main(np.array(datas), conv, textureFile)
