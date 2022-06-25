@@ -7,7 +7,7 @@ import pyproj
 import vtk
 
 from vtkmodules.vtkCommonColor import vtkNamedColors
-from vtkmodules.vtkCommonCore import vtkDoubleArray, vtkPoints
+from vtkmodules.vtkCommonCore import vtkDoubleArray, vtkPoints, vtkLookupTable
 from vtkmodules.vtkCommonDataModel import vtkStructuredGrid, vtkPolyLine, vtkPolyData, vtkCellArray
 from vtkmodules.vtkFiltersCore import vtkTubeFilter
 from vtkmodules.vtkFiltersGeneral import vtkWarpTo
@@ -219,35 +219,54 @@ def render_map(values: List[List[float]], conv: Converter, img, avion: List[Tupl
 
     # parcours de l'avion
 
-    # avion_parcours = vtkDoubleArray()
-    # avion_parcours.SetNumberOfComponents(1)
+    avion_parcours = vtkDoubleArray()
+    avion_parcours.SetNumberOfComponents(1)
     avion_points = vtkPoints()
 
+    h0 = avion[0][2]
+    min_d = math.inf
+    max_d = 0
     for (lat, lon, h) in avion:
         #print(lat, lon)
         cart_x, cart_y, cart_z = coord_to_exact_pos(
             lat, lon,  h)
-        #avion_parcours.InsertNextValue((1.0))
         avion_points.InsertNextPoint(cart_x, cart_y, cart_z)
+        delta = h-h0
+        min_d = min(delta, min_d)
+        max_d = max(delta, max_d)
+        h0 = h
+
+    h0 = avion[0][2]
+    for (lat, lon, h) in avion:
+        avion_parcours.InsertNextValue((h-h0-min_d)/(max_d - min_d))
+        h0 = h
 
     lineSource = vtkLineSource()
     lineSource.SetPoints(avion_points)
-    lineSource.SetResolution(20)
+    lineSource.SetResolution(2)
     lineSource.Update()
+    lineSource.GetOutput().GetPointData().SetScalars(avion_parcours)
 
     tube = vtkTubeFilter()
     tube.SetInputConnection(lineSource.GetOutputPort())
-    tube.SetRadius(150)
+    tube.SetRadius(50)
     tube.SetNumberOfSides(8)
     tube.Update()
 
+    lut = vtkLookupTable()
+    lut.SetNumberOfTableValues(3)
+    lut.SetTableValue(0, colors.GetColor4d("Blue"))
+    lut.SetTableValue(1, colors.GetColor4d("Green"))
+    lut.SetTableValue(2, colors.GetColor4d("Red"))
+    lut.Build()
+
     avion_mapper = vtkDataSetMapper()
     avion_mapper.SetInputConnection(tube.GetOutputPort())
-    avion_mapper.ScalarVisibilityOff()
+    print(min_d, max_d)
+    avion_mapper.ScalarVisibilityOn()
 
     avion_actor = vtkActor()
     avion_actor.SetMapper(avion_mapper)
-    avion_actor.GetProperty().SetColor(colors.GetColor3d('Gold'))
 
     ren = vtkRenderer()
     ren.AddActor(avion_actor)
@@ -304,7 +323,6 @@ if __name__ == '__main__':
             coord = rt90_to_latlon.transform(int(infos[2]), int(infos[1]))
             parcours_avion.append((coord[0], coord[1], height))
     gps_file.close()
-
 
     tl = rt90_to_latlon.transform(7022573, 1349340)
     tr = rt90_to_latlon.transform(7022967, 1371573)
