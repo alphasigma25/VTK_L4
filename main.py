@@ -7,14 +7,17 @@ import pyproj
 import vtk
 
 from vtkmodules.vtkCommonColor import vtkNamedColors
-from vtkmodules.vtkCommonCore import vtkDoubleArray, vtkPoints, vtkLookupTable
-from vtkmodules.vtkCommonDataModel import vtkStructuredGrid
-from vtkmodules.vtkIOImage import vtkImageReader, vtkImageReader2Factory
+from vtkmodules.vtkCommonCore import vtkDoubleArray, vtkPoints
+from vtkmodules.vtkCommonDataModel import vtkStructuredGrid, vtkPolyLine, vtkPolyData, vtkCellArray
+from vtkmodules.vtkFiltersCore import vtkTubeFilter
+from vtkmodules.vtkFiltersGeneral import vtkWarpTo
+from vtkmodules.vtkFiltersSources import vtkLineSource
+from vtkmodules.vtkIOImage import vtkImageReader2Factory
 from vtkmodules.vtkInteractionStyle import vtkInteractorStyleTrackballCamera
 from vtkmodules.vtkRenderingCore import (
     vtkRenderWindow,
     vtkRenderWindowInteractor,
-    vtkRenderer, vtkActor, vtkTexture, vtkDataSetMapper
+    vtkRenderer, vtkActor, vtkTexture, vtkDataSetMapper, vtkPolyDataMapper
 )
 
 
@@ -169,36 +172,34 @@ def approximer(h_data, x: float, y: float) -> float:
     return ff * (xii*yii) + cf * (xi*yii) + fc * (xii*yi) + cc * (xi*yi)
 
 
-def render_map(values: List[List[float]], conv: Converter, img):
+r_terre = 6352800
+
+
+def coord_to_exact_pos(lat: float, lon: float, height: float) -> Tuple[float, float, float]:
+    r = r_terre + height
+    phi = math.radians(lat)
+    theta = math.radians(-lon/2)
+    cart_x = r * math.sin(phi) * math.cos(theta)
+    cart_y = r * math.sin(phi) * math.sin(theta)
+    cart_z = r * math.cos(phi)
+    return (cart_x, cart_y, cart_z)
+
+
+def render_map(values: List[List[float]], conv: Converter, img, avion: List[Tuple[int, int, float]]):
     nx, ny = values.shape
 
     point_values = vtkDoubleArray()
     point_values.SetNumberOfComponents(2)
     points = vtkPoints()
 
-    """
     for y in range(ny):
         for x in range(nx):
-            current = values[x][y]
-            point_values.InsertNextTuple((y/ny, x/nx))
-            points.InsertNextPoint(y, x, current/100)
-
-    #"""
-
-    r_terre = 6352800
-    points = vtkPoints()
-    for y in range(ny):
-        for x in range(nx):
-            current = values[x][y]
             lat, lon = conv.x_to_l(x/nx, y/ny)
-            r = r_terre + current
-            phi = math.radians(lat)
-            theta = math.radians(-lon/2)
-            cart_x = r * math.sin(phi) * math.cos(theta)
-            cart_y = r * math.sin(phi) * math.sin(theta)
-            cart_z = r * math.cos(phi)
+            #print(lat, lon)
+            cart_x, cart_y, cart_z = coord_to_exact_pos(
+                lat, lon,  values[x][y])
             point_values.InsertNextTuple((x/nx, y/ny))
-            points.InsertNextPoint(cart_x, cart_y, cart_z) #"""
+            points.InsertNextPoint(cart_x, cart_y, cart_z)
 
     struct_grid = vtkStructuredGrid()
     struct_grid.SetDimensions(nx, ny, 1)
@@ -212,20 +213,53 @@ def render_map(values: List[List[float]], conv: Converter, img):
     mapper = vtkDataSetMapper()
     mapper.SetInputData(struct_grid)
 
-    actor = vtkActor()
-    actor.SetMapper(mapper)
-    actor.SetTexture(txt)
+    map_actor = vtkActor()
+    map_actor.SetMapper(mapper)
+    map_actor.SetTexture(txt)
+
+    # parcours de l'avion
+
+    # avion_parcours = vtkDoubleArray()
+    # avion_parcours.SetNumberOfComponents(1)
+    avion_points = vtkPoints()
+
+    for (lat, lon, h) in avion:
+        #print(lat, lon)
+        cart_x, cart_y, cart_z = coord_to_exact_pos(
+            lat, lon,  h)
+        #avion_parcours.InsertNextValue((1.0))
+        avion_points.InsertNextPoint(cart_x, cart_y, cart_z)
+
+    lineSource = vtkLineSource()
+    lineSource.SetPoints(avion_points)
+    lineSource.SetResolution(20)
+    lineSource.Update()
+
+    tube = vtkTubeFilter()
+    tube.SetInputConnection(lineSource.GetOutputPort())
+    tube.SetRadius(150)
+    tube.SetNumberOfSides(8)
+    tube.Update()
+
+    avion_mapper = vtkDataSetMapper()
+    avion_mapper.SetInputConnection(tube.GetOutputPort())
+    avion_mapper.ScalarVisibilityOff()
+
+    avion_actor = vtkActor()
+    avion_actor.SetMapper(avion_mapper)
+    avion_actor.GetProperty().SetColor(colors.GetColor3d('Gold'))
 
     ren = vtkRenderer()
-    ren.AddActor(actor)
+    ren.AddActor(avion_actor)
+    ren.AddActor(map_actor)
 
     return ren
 
 
-def main(data, conv, img):
+def main(data, conv, img, avion):
     ren_win = vtkRenderWindow()
 
-    ren = render_map(data, conv, img)
+    ren = render_map(data, conv, img, avion)
 
     ren.SetBackground(0.9, 0.9, 0.9)
 
@@ -247,18 +281,6 @@ if __name__ == '__main__':
     gps_file = open('vtkgps.txt', 'r')
     Lines = gps_file.readlines()
 
-    parcours_avion = []
-    # Strips the newline character
-    for line in Lines:
-        infos = line.split()
-        if len(infos) > 4:
-            # RT90 coordinates
-            coord = (infos[0], int(infos[1]), int(infos[2]))
-            # altitude en mètres
-            height = float(infos[3])
-            parcours_avion.append((coord, height))
-    gps_file.close()
-
     # coord de l'image jpg :
     # Haut-gauche : 1349340 7022573
     # Haut-droite : 1371573 7022967
@@ -269,6 +291,21 @@ if __name__ == '__main__':
     wgs84 = 'epsg:4326'  # Global lat-lon coordinate system
 
     rt90_to_latlon = pyproj.Transformer.from_crs(rt90, wgs84)
+
+    parcours_avion = []
+    # Strips the newline character
+    for line in Lines:
+        infos = line.split()
+        if len(infos) > 4:
+            # RT90 coordinates
+            # latitudes - longitudes
+            # altitude en mètres
+            height = float(infos[3])
+            coord = rt90_to_latlon.transform(int(infos[2]), int(infos[1]))
+            parcours_avion.append((coord[0], coord[1], height))
+    gps_file.close()
+
+
     tl = rt90_to_latlon.transform(7022573, 1349340)
     tr = rt90_to_latlon.transform(7022967, 1371573)
     br = rt90_to_latlon.transform(7006362, 1371835)
@@ -302,4 +339,6 @@ if __name__ == '__main__':
     textureFile.Update()
 
     # rendu
-    main(np.array(datas), conv, textureFile)
+    main(np.array(datas), conv, textureFile, parcours_avion)
+
+    # https://kitware.github.io/vtk-examples/site/Python/VisualizationAlgorithms/LOx/
